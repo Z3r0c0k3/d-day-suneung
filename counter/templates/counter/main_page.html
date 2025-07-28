@@ -1,0 +1,108 @@
+{% load static %} {% load pwa %}
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    {% progressive_web_app_meta %}
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <title>수능/모고 D-DAY & 타이머</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}" />
+    <script src="{% static 'js/dday.js' %}" defer></script>
+  </head>
+  <body>
+    <div id="loading-screen">
+      <div class="loading-text">수능까지,<br />D-DAY</div>
+    </div>
+    <div class="page-container">
+      <!-- Page 1: CSAT D-Day -->
+      <section class="page" id="csat-page">
+        <header>
+          <h1>수능까지, D-DAY</h1>
+        </header>
+        <main>
+          <div class="quote-wrapper">
+            <p class="motivational-quote"></p>
+          </div>
+
+          <div class="d-day-counter" data-csat-counter="0">
+            <h2></h2>
+            <div id="csat-0"></div>
+          </div>
+          <div class="d-day-counter" data-csat-counter="1">
+            <h2></h2>
+            <div id="csat-1"></div>
+          </div>
+          <div class="d-day-counter" data-csat-counter="2">
+            <h2></h2>
+            <div id="csat-2"></div>
+          </div>
+        </main>
+      </section>
+
+      <!-- Page 2: Mock Exam D-Day -->
+      <section class="page" id="mock-exam-page">
+        <header>
+          <h1>모고까지, D-DAY</h1>
+        </header>
+        <main>
+          <div class="quote-wrapper">
+            <p class="motivational-quote"></p>
+          </div>
+
+          <div class="d-day-counter" data-mock-counter="3">
+            <h2></h2>
+            <div id="mock-exam-3"></div>
+          </div>
+          <div class="d-day-counter" data-mock-counter="6">
+            <h2></h2>
+            <div id="mock-exam-6"></div>
+          </div>
+          <div class="d-day-counter" data-mock-counter="9">
+            <h2></h2>
+            <div id="mock-exam-9"></div>
+          </div>
+        </main>
+      </section>
+
+      <!-- Page 3: Timer -->
+      <section class="page" id="timer-page">
+        <header>
+          <h1><span>수</span>능 <span>타</span>이머</h1>
+        </header>
+        <main>
+          <p>과목을 선택해주세요</p>
+          <div class="timer-display">000:00.000</div>
+          <div class="timer-controls">
+            <button id="start-pause-btn">시작</button>
+            <button id="reset-btn">초기화</button>
+          </div>
+          <div class="subject-selector">
+            <button id="select-subject-btn">과목 선택하기</button>
+            <ul class="subject-list hidden">
+              <li data-time="4800">국어 - 80분</li>
+              <li data-time="6000">수학 - 100분</li>
+              <li data-time="4200">영어 - 70분</li>
+              <li data-time="1800">한국사 - 30분</li>
+              <li data-time="1800">탐구 1 - 30분</li>
+              <li data-time="1800">탐구 2 - 30분</li>
+              <li data-time="2400">제2외국어 - 40분</li>
+            </ul>
+          </div>
+        </main>
+      </section>
+    </div>
+
+    <div class="page-indicator">
+      <span class="dot active"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    </div>
+
+    <button id="prev-btn" class="nav-btn">&lt;</button>
+    <button id="next-btn" class="nav-btn">&gt;</button>
+    <button id="install-btn" class="hidden">앱 설치</button>
+  </body>
+</html>
