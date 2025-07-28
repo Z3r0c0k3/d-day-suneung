@@ -1,82 +1,172 @@
 #!/bin/bash
 
+# ===================================================================================
+# Django 'suneung_dday' Auto-Deployment Script for Ubuntu
+# ===================================================================================
+# This script automates the deployment of the suneung_dday Django project
+# using Gunicorn and Nginx. It should be run by a non-root user with sudo privileges.
+# Based on a more robust script from the zerocoke-portfolio project.
+# ===================================================================================
+
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
-# --- Configuration ---
-PROJECT_NAME="suneung_dday"
-PROJECT_DIR=$(pwd)
-USER=$(whoami)
+# --- Helper functions for colored output ---
+info() { echo -e "\e[34m[INFO]\e[0m $1"; }
+success() { echo -e "\e[32m[SUCCESS]\e[0m $1"; }
+error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 
-echo "--- Starting Deployment for $PROJECT_NAME ---"
+# --- Configuration ---
+# The name of your Django project.
+PROJECT_NAME="suneung_dday"
+# The full path to your project directory.
+PROJECT_DIR=$(pwd)
+# The user that will run the Gunicorn process.
+CURRENT_USER=$(whoami)
+# Your server's domain or IP address. Use "_" to match any hostname.
+DOMAIN_OR_IP="_"
+
+echo "==============================================="
+info "Starting Deployment for $PROJECT_NAME"
+echo "==============================================="
+info "Project Directory: $PROJECT_DIR"
+info "Running as User:   $CURRENT_USER"
+info "Target Domain/IP:  $DOMAIN_OR_IP"
+echo "-----------------------------------------------"
+
 
 # --- 1. System Update and Package Installation ---
-echo "--- Updating system packages and installing dependencies ---"
+info "Updating system packages and installing dependencies..."
 sudo apt-get update
 sudo apt-get install -y python3-pip python3-dev python3-venv nginx
+success "System packages are up to date."
 
 # --- 2. Project Setup ---
-echo "--- Setting up Python virtual environment and installing requirements ---"
-python3 -m venv venv
+info "Setting up Python virtual environment..."
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    info "Virtual environment created."
+fi
+
+info "Activating virtual environment and installing requirements..."
 source venv/bin/activate
 pip install -r requirements.txt
+success "Python environment is ready."
 
 # --- 3. Django Setup ---
-echo "--- Applying database migrations and collecting static files ---"
+info "Applying database migrations and collecting static files..."
 python manage.py migrate
 python manage.py collectstatic --noinput
+success "Django setup complete."
 
 # --- 4. Gunicorn Setup ---
-echo "--- Creating Gunicorn systemd service file ---"
-sudo tee /etc/systemd/system/gunicorn.service > /dev/null <<EOF
+# Use a unique socket and service name to avoid conflicts.
+GUNICORN_SOCKET_FILE="/etc/systemd/system/gunicorn_${PROJECT_NAME}.socket"
+GUNICORN_SERVICE_FILE="/etc/systemd/system/gunicorn_${PROJECT_NAME}.service"
+
+info "Configuring Gunicorn systemd socket at $GUNICORN_SOCKET_FILE..."
+sudo bash -c "cat > $GUNICORN_SOCKET_FILE" <<EOF
+[Unit]
+Description=gunicorn socket for $PROJECT_NAME
+
+[Socket]
+ListenStream=/run/gunicorn_${PROJECT_NAME}.sock
+
+[Install]
+WantedBy=sockets.target
+EOF
+
+info "Configuring Gunicorn systemd service at $GUNICORN_SERVICE_FILE..."
+sudo bash -c "cat > $GUNICORN_SERVICE_FILE" <<EOF
 [Unit]
 Description=gunicorn daemon for $PROJECT_NAME
+Requires=gunicorn_${PROJECT_NAME}.socket
 After=network.target
 
 [Service]
-User=$USER
+User=$CURRENT_USER
 Group=www-data
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 3 --bind unix:$PROJECT_DIR/$PROJECT_NAME.sock $PROJECT_NAME.wsgi:application
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn \\
+          --access-logfile - \\
+          --workers 3 \\
+          --bind unix:/run/gunicorn_${PROJECT_NAME}.sock \\
+          $PROJECT_NAME.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
 EOF
+success "Gunicorn systemd files created."
 
 # --- 5. Nginx Setup ---
-echo "--- Creating Nginx server block ---"
-sudo tee /etc/nginx/sites-available/$PROJECT_NAME > /dev/null <<EOF
+NGINX_CONF_FILE="/etc/nginx/sites-available/$PROJECT_NAME"
+info "Creating Nginx server block at $NGINX_CONF_FILE..."
+sudo bash -c "cat > $NGINX_CONF_FILE" <<EOF
 server {
     listen 80;
-    server_name _; # 실제 도메인 또는 IP 주소로 변경하세요
+    server_name $DOMAIN_OR_IP;
 
-    location = /favicon.ico { access_log off; log_not_found off; }
-    location /static/ {
-        root $PROJECT_DIR;
+    location = /favicon.ico { 
+        access_log off; 
+        log_not_found off; 
+        alias $PROJECT_DIR/static/favicon.ico;
     }
-    
-    location /staticfiles/ {
-        root $PROJECT_DIR;
+
+    location /static/ {
+        alias $PROJECT_DIR/static/;
     }
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:$PROJECT_DIR/$PROJECT_NAME.sock;
+        proxy_pass http://unix:/run/gunicorn_${PROJECT_NAME}.sock;
     }
 }
 EOF
 
-# Enable the new Nginx server block
-sudo ln -sf /etc/nginx/sites-available/$PROJECT_NAME /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
+info "Enabling the new Nginx configuration..."
+sudo ln -sf $NGINX_CONF_FILE /etc/nginx/sites-enabled/
+# Remove default Nginx config if it exists
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    sudo rm /etc/nginx/sites-enabled/default
+    info "Removed default Nginx site configuration."
+fi
 
-# --- 6. Start and Enable Services ---
-echo "--- Starting and enabling Gunicorn and Nginx services ---"
+info "Testing Nginx configuration..."
+sudo nginx -t
+success "Nginx configuration is valid."
+
+# --- 6. Firewall Setup ---
+info "Configuring firewall to allow Nginx traffic..."
+sudo ufw allow 'Nginx Full'
+# You can check the status with 'sudo ufw status'
+success "Firewall configured to allow 'Nginx Full'."
+
+# --- 7. Start and Enable Services ---
+info "Starting and enabling Gunicorn and Nginx services..."
 sudo systemctl daemon-reload
-sudo systemctl restart gunicorn
-sudo systemctl enable gunicorn
-sudo systemctl restart nginx
-sudo systemctl enable nginx
+sudo systemctl start gunicorn_${PROJECT_NAME}.socket
+sudo systemctl enable gunicorn_${PROJECT_NAME}.socket
+sudo systemctl restart gunicorn_${PROJECT_NAME}.service
+# Check if gunicorn is active
+sudo systemctl status gunicorn_${PROJECT_NAME}.socket --no-pager
+sudo systemctl status gunicorn_${PROJECT_NAME}.service --no-pager
 
-echo "--- Deployment Finished Successfully! ---"
-echo "You can now access your site at your server's IP address." 
+info "Restarting Nginx..."
+sudo systemctl restart nginx
+
+# --- Final Success Message ---
+echo
+echo "==============================================="
+success "Deployment Finished Successfully!"
+echo "==============================================="
+echo
+info "Your Django project is now live."
+if [ "$DOMAIN_OR_IP" == "_" ]; then
+    info "Access it at your server's IP address."
+else
+    info "Access it at: http://$DOMAIN_OR_IP"
+fi
+echo
+info "To monitor Gunicorn logs, run: sudo journalctl -u gunicorn_${PROJECT_NAME}.service"
+info "To monitor Nginx logs, run: sudo journalctl -u nginx.service"
+echo 
