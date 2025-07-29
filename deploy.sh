@@ -61,7 +61,15 @@ python manage.py migrate
 python manage.py collectstatic --noinput
 success "Django setup complete."
 
-# --- 4. Gunicorn & Environment Setup ---
+# --- 4. File Permissions Setup ---
+info "Setting file permissions..."
+# Set group ownership to www-data so Nginx can access the files
+sudo chown -R $CURRENT_USER:www-data $PROJECT_DIR
+# Give read and execute permissions to the group
+sudo chmod -R 775 $PROJECT_DIR
+success "File permissions set correctly."
+
+# --- 5. Gunicorn & Environment Setup ---
 if [ -f .env ]; then
     info "Using existing .env file provided by the user."
     info "Please ensure it contains SECRET_KEY, DEBUG=False, and ALLOWED_HOSTS."
@@ -76,7 +84,7 @@ EOF
     success ".env file created. Using domain '$DOMAIN_OR_IP' for ALLOWED_HOSTS."
 fi
 
-# --- 5. Gunicorn Setup ---
+# --- 6. Gunicorn Setup ---
 # Use a unique socket and service name to avoid conflicts.
 GUNICORN_SOCKET_FILE="/etc/systemd/system/gunicorn_${REPO_NAME}.socket"
 GUNICORN_SERVICE_FILE="/etc/systemd/system/gunicorn_${REPO_NAME}.service"
@@ -116,7 +124,7 @@ WantedBy=multi-user.target
 EOF
 success "Gunicorn systemd files created."
 
-# --- 6. Nginx Setup ---
+# --- 7. Nginx Setup ---
 NGINX_CONF_FILE="/etc/nginx/sites-available/$REPO_NAME"
 info "Creating Nginx server block at $NGINX_CONF_FILE..."
 sudo bash -c "cat > $NGINX_CONF_FILE" <<EOF
@@ -153,13 +161,13 @@ info "Testing Nginx configuration..."
 sudo nginx -t
 success "Nginx configuration is valid."
 
-# --- 7. Firewall Setup ---
+# --- 8. Firewall Setup ---
 info "Configuring firewall to allow Nginx traffic..."
 sudo ufw allow 'Nginx Full'
 # You can check the status with 'sudo ufw status'
 success "Firewall configured to allow 'Nginx Full'."
 
-# --- 8. Start and Enable Services ---
+# --- 9. Start and Enable Services ---
 info "Starting and enabling Gunicorn and Nginx services..."
 sudo systemctl daemon-reload
 sudo systemctl start gunicorn_${REPO_NAME}.socket
