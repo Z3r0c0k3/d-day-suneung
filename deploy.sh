@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ===================================================================================
-# Django 'suneung_dday' Auto-Deployment Script for Ubuntu
+# Django 'd-day-suneung' Auto-Deployment Script for Ubuntu
 # ===================================================================================
 # This script automates the deployment of the suneung_dday Django project
 # using Gunicorn and Nginx. It should be run by a non-root user with sudo privileges.
@@ -17,8 +17,10 @@ success() { echo -e "\e[32m[SUCCESS]\e[0m $1"; }
 error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 
 # --- Configuration ---
-# The name of your Django project.
-PROJECT_NAME="suneung_dday"
+# The name of your Django project (the directory with wsgi.py).
+DJANGO_PROJECT_NAME="suneung_dday"
+# The name for services and configs, derived from the repository directory name.
+REPO_NAME=$(basename "$(pwd)")
 # The full path to your project directory.
 PROJECT_DIR=$(pwd)
 # The user that will run the Gunicorn process.
@@ -27,7 +29,7 @@ CURRENT_USER=$(whoami)
 DOMAIN_OR_IP="csat.zerocoke.kr"
 
 echo "==============================================="
-info "Starting Deployment for $PROJECT_NAME"
+info "Starting Deployment for $REPO_NAME"
 echo "==============================================="
 info "Project Directory: $PROJECT_DIR"
 info "Running as User:   $CURRENT_USER"
@@ -76,16 +78,16 @@ fi
 
 # --- 5. Gunicorn Setup ---
 # Use a unique socket and service name to avoid conflicts.
-GUNICORN_SOCKET_FILE="/etc/systemd/system/gunicorn_${PROJECT_NAME}.socket"
-GUNICORN_SERVICE_FILE="/etc/systemd/system/gunicorn_${PROJECT_NAME}.service"
+GUNICORN_SOCKET_FILE="/etc/systemd/system/gunicorn_${REPO_NAME}.socket"
+GUNICORN_SERVICE_FILE="/etc/systemd/system/gunicorn_${REPO_NAME}.service"
 
 info "Configuring Gunicorn systemd socket at $GUNICORN_SOCKET_FILE..."
 sudo bash -c "cat > $GUNICORN_SOCKET_FILE" <<EOF
 [Unit]
-Description=gunicorn socket for $PROJECT_NAME
+Description=gunicorn socket for $REPO_NAME
 
 [Socket]
-ListenStream=/run/gunicorn_${PROJECT_NAME}.sock
+ListenStream=/run/gunicorn_${REPO_NAME}.sock
 
 [Install]
 WantedBy=sockets.target
@@ -94,8 +96,8 @@ EOF
 info "Configuring Gunicorn systemd service at $GUNICORN_SERVICE_FILE..."
 sudo bash -c "cat > $GUNICORN_SERVICE_FILE" <<EOF
 [Unit]
-Description=gunicorn daemon for $PROJECT_NAME
-Requires=gunicorn_${PROJECT_NAME}.socket
+Description=gunicorn daemon for $REPO_NAME
+Requires=gunicorn_${REPO_NAME}.socket
 After=network.target
 
 [Service]
@@ -106,8 +108,8 @@ EnvironmentFile=$PROJECT_DIR/.env
 ExecStart=$PROJECT_DIR/venv/bin/gunicorn \
           --access-logfile - \
           --workers 3 \
-          --bind unix:/run/gunicorn_${PROJECT_NAME}.sock \
-          $PROJECT_NAME.wsgi:application
+          --bind unix:/run/gunicorn_${REPO_NAME}.sock \
+          $DJANGO_PROJECT_NAME.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
@@ -115,7 +117,7 @@ EOF
 success "Gunicorn systemd files created."
 
 # --- 6. Nginx Setup ---
-NGINX_CONF_FILE="/etc/nginx/sites-available/$PROJECT_NAME"
+NGINX_CONF_FILE="/etc/nginx/sites-available/$REPO_NAME"
 info "Creating Nginx server block at $NGINX_CONF_FILE..."
 sudo bash -c "cat > $NGINX_CONF_FILE" <<EOF
 server {
@@ -134,7 +136,7 @@ server {
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:/run/gunicorn_${PROJECT_NAME}.sock;
+        proxy_pass http://unix:/run/gunicorn_${REPO_NAME}.sock;
     }
 }
 EOF
@@ -160,12 +162,12 @@ success "Firewall configured to allow 'Nginx Full'."
 # --- 8. Start and Enable Services ---
 info "Starting and enabling Gunicorn and Nginx services..."
 sudo systemctl daemon-reload
-sudo systemctl start gunicorn_${PROJECT_NAME}.socket
-sudo systemctl enable gunicorn_${PROJECT_NAME}.socket
-sudo systemctl restart gunicorn_${PROJECT_NAME}.service
+sudo systemctl start gunicorn_${REPO_NAME}.socket
+sudo systemctl enable gunicorn_${REPO_NAME}.socket
+sudo systemctl restart gunicorn_${REPO_NAME}.service
 # Check if gunicorn is active
-sudo systemctl status gunicorn_${PROJECT_NAME}.socket --no-pager
-sudo systemctl status gunicorn_${PROJECT_NAME}.service --no-pager
+sudo systemctl status gunicorn_${REPO_NAME}.socket --no-pager
+sudo systemctl status gunicorn_${REPO_NAME}.service --no-pager
 
 info "Restarting Nginx..."
 sudo systemctl restart nginx
@@ -183,6 +185,6 @@ else
     info "Access it at: http://$DOMAIN_OR_IP"
 fi
 echo
-info "To monitor Gunicorn logs, run: sudo journalctl -u gunicorn_${PROJECT_NAME}.service"
+info "To monitor Gunicorn logs, run: sudo journalctl -u gunicorn_${REPO_NAME}.service"
 info "To monitor Nginx logs, run: sudo journalctl -u nginx.service"
 echo 
