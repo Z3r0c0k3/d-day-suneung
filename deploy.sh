@@ -118,11 +118,11 @@ server {
     location = /favicon.ico { 
         access_log off; 
         log_not_found off; 
-        root /home/$CURRENT_USER/$PROJECT_NAME/staticfiles/;
+        alias $PROJECT_DIR/staticfiles/favicon.ico;
     }
 
     location /static/ {
-        root /home/$CURRENT_USER/$PROJECT_NAME/;
+        alias $PROJECT_DIR/staticfiles/;
     }
 
     location / {
