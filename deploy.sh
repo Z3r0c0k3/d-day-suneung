@@ -60,12 +60,19 @@ python manage.py collectstatic --noinput
 success "Django setup complete."
 
 # --- 4. Gunicorn & Environment Setup ---
-info "Creating .env file for environment variables..."
-cat > .env <<EOF
-SECRET_KEY='$(python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')'
+if [ -f .env ]; then
+    info "Using existing .env file provided by the user."
+    info "Please ensure it contains SECRET_KEY, DEBUG=False, and ALLOWED_HOSTS."
+else
+    info "No .env file found. Creating a new one with production settings..."
+    SECRET_KEY_VALUE=$(python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+    cat > .env <<EOF
+SECRET_KEY='$SECRET_KEY_VALUE'
 DEBUG=False
+ALLOWED_HOSTS=$DOMAIN_OR_IP
 EOF
-success ".env file created with SECRET_KEY."
+    success ".env file created. Using domain '$DOMAIN_OR_IP' for ALLOWED_HOSTS."
+fi
 
 # --- 5. Gunicorn Setup ---
 # Use a unique socket and service name to avoid conflicts.

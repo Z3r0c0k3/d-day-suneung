@@ -29,8 +29,11 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = ['csat.zerocoke.kr', '127.0.0.1', 'localhost']
-
+ALLOWED_HOSTS_str = os.getenv('ALLOWED_HOSTS')
+if ALLOWED_HOSTS_str:
+    ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_str.split(',')]
+else:
+    ALLOWED_HOSTS = []
 
 # Application definition
 
