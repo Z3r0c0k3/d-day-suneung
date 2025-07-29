@@ -13,22 +13,26 @@ echo -e "${YELLOW}This script will configure Nginx and Gunicorn for your Django 
 echo
 
 # --- 1. User Input ---
-read -p "Enter the project name (e.g., suneung_dday): " PROJECT_NAME
+# Use the current directory name as the default service name
+DEFAULT_SERVICE_NAME=$(basename "$PWD" | tr -d '[:space:]')
+read -p "Enter a name for the Gunicorn service and Nginx config [${DEFAULT_SERVICE_NAME}]: " SERVICE_NAME
+SERVICE_NAME=${SERVICE_NAME:-${DEFAULT_SERVICE_NAME}}
+
+read -p "Enter the Django project name (the one with wsgi.py) [suneung_dday]: " DJANGO_PROJECT_NAME
+DJANGO_PROJECT_NAME=${DJANGO_PROJECT_NAME:-suneung_dday}
+
 read -p "Enable Debug Mode in .env? (true/false): " DEBUG_MODE
 read -p "Enter Allowed Hosts for .env (comma-separated, e.g., localhost,127.0.0.1,yourdomain.com): " ALLOWED_HOSTS_INPUT
 
-if [[ -z "$PROJECT_NAME" || -z "$DEBUG_MODE" || -z "$ALLOWED_HOSTS_INPUT" ]]; then
+if [[ -z "$SERVICE_NAME" || -z "$DJANGO_PROJECT_NAME" || -z "$DEBUG_MODE" || -z "$ALLOWED_HOSTS_INPUT" ]]; then
     echo -e "${YELLOW}Error: All inputs are required. Aborting.${NC}"
     exit 1
 fi
 
 # --- 2. Create .env File ---
 echo -e "${GREEN}--- Generating new SECRET_KEY and creating .env file ---${NC}"
-# Install django just to generate a key, if not available system-wide
-if ! python3 -c "from django.core.management.utils import get_random_secret_key" &> /dev/null; then
-    sudo apt-get install -y python3-django-common
-fi
-SECRET_KEY=$(python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+# Use Python's built-in secrets module for a secure key. This is more robust than relying on a system package.
+SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')
 
 cat > .env << EOF
 # Environment variables for Django project
@@ -49,7 +53,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# --- 5. Django Project Setup ---
+# --- 5. Django Setup ---
 echo -e "${GREEN}--- Applying migrations and collecting static files ---${NC}"
 python manage.py migrate
 python manage.py collectstatic --noinput
@@ -59,16 +63,16 @@ echo -e "${GREEN}--- Configuring Gunicorn systemd service ---${NC}"
 PROJECT_DIR=$(pwd)
 USER=$(whoami)
 
-sudo tee /etc/systemd/system/${PROJECT_NAME}.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
-Description=gunicorn daemon for ${PROJECT_NAME}
+Description=gunicorn daemon for ${SERVICE_NAME}
 After=network.target
 
 [Service]
 User=${USER}
 Group=www-data
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=${PROJECT_DIR}/venv/bin/gunicorn --workers 3 --bind unix:${PROJECT_DIR}/${PROJECT_NAME}.sock ${PROJECT_NAME}.wsgi:application
+ExecStart=${PROJECT_DIR}/venv/bin/gunicorn --workers 3 --bind unix:${PROJECT_DIR}/${SERVICE_NAME}.sock ${DJANGO_PROJECT_NAME}.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
@@ -78,10 +82,11 @@ EOF
 echo -e "${GREEN}--- Configuring Nginx server block ---${NC}"
 SERVER_NAME=$(echo ${ALLOWED_HOSTS_INPUT} | sed 's/,/ /g')
 
-sudo tee /etc/nginx/sites-available/${PROJECT_NAME} > /dev/null <<EOF
+sudo tee /etc/nginx/sites-available/${SERVICE_NAME} > /dev/null <<EOF
 server {
     listen 80;
     server_name ${SERVER_NAME};
+    set $project_path /d-day-suneung;
 
     location = /favicon.ico { alias ${PROJECT_DIR}/staticfiles/favicon.ico; }
     location /static/ {
@@ -90,7 +95,7 @@ server {
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:${PROJECT_DIR}/${PROJECT_NAME}.sock;
+        proxy_pass http://unix:${PROJECT_DIR}/${SERVICE_NAME}.sock;
     }
 }
 EOF
@@ -99,7 +104,7 @@ EOF
 if [ -f /etc/nginx/sites-enabled/default ]; then
     sudo rm /etc/nginx/sites-enabled/default
 fi
-sudo ln -sf /etc/nginx/sites-available/${PROJECT_NAME} /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/${SERVICE_NAME} /etc/nginx/sites-enabled/
 
 # Test Nginx config
 sudo nginx -t
@@ -107,8 +112,8 @@ sudo nginx -t
 # --- 8. Start and Enable Services ---
 echo -e "${GREEN}--- Starting and enabling Gunicorn and Nginx services ---${NC}"
 sudo systemctl daemon-reload
-sudo systemctl restart gunicorn
-sudo systemctl enable gunicorn
+sudo systemctl restart ${SERVICE_NAME}.service
+sudo systemctl enable ${SERVICE_NAME}.service
 sudo systemctl restart nginx
 sudo systemctl enable nginx
 
