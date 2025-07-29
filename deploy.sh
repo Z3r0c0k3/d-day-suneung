@@ -24,7 +24,7 @@ PROJECT_DIR=$(pwd)
 # The user that will run the Gunicorn process.
 CURRENT_USER=$(whoami)
 # Your server's domain or IP address. Use "_" to match any hostname.
-DOMAIN_OR_IP="_"
+DOMAIN_OR_IP="csat.zerocoke.kr"
 
 echo "==============================================="
 info "Starting Deployment for $PROJECT_NAME"
@@ -59,7 +59,15 @@ python manage.py migrate
 python manage.py collectstatic --noinput
 success "Django setup complete."
 
-# --- 4. Gunicorn Setup ---
+# --- 4. Gunicorn & Environment Setup ---
+info "Creating .env file for environment variables..."
+cat > .env <<EOF
+SECRET_KEY='$(python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')'
+DEBUG=False
+EOF
+success ".env file created with SECRET_KEY."
+
+# --- 5. Gunicorn Setup ---
 # Use a unique socket and service name to avoid conflicts.
 GUNICORN_SOCKET_FILE="/etc/systemd/system/gunicorn_${PROJECT_NAME}.socket"
 GUNICORN_SERVICE_FILE="/etc/systemd/system/gunicorn_${PROJECT_NAME}.service"
@@ -87,10 +95,11 @@ After=network.target
 User=$CURRENT_USER
 Group=www-data
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn \\
-          --access-logfile - \\
-          --workers 3 \\
-          --bind unix:/run/gunicorn_${PROJECT_NAME}.sock \\
+EnvironmentFile=$PROJECT_DIR/.env
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn \
+          --access-logfile - \
+          --workers 3 \
+          --bind unix:/run/gunicorn_${PROJECT_NAME}.sock \
           $PROJECT_NAME.wsgi:application
 
 [Install]
@@ -98,7 +107,7 @@ WantedBy=multi-user.target
 EOF
 success "Gunicorn systemd files created."
 
-# --- 5. Nginx Setup ---
+# --- 6. Nginx Setup ---
 NGINX_CONF_FILE="/etc/nginx/sites-available/$PROJECT_NAME"
 info "Creating Nginx server block at $NGINX_CONF_FILE..."
 sudo bash -c "cat > $NGINX_CONF_FILE" <<EOF
@@ -109,11 +118,11 @@ server {
     location = /favicon.ico { 
         access_log off; 
         log_not_found off; 
-        alias $PROJECT_DIR/static/favicon.ico;
+        root /home/$CURRENT_USER/$PROJECT_NAME/staticfiles/;
     }
 
     location /static/ {
-        alias $PROJECT_DIR/static/;
+        root /home/$CURRENT_USER/$PROJECT_NAME/;
     }
 
     location / {
@@ -135,13 +144,13 @@ info "Testing Nginx configuration..."
 sudo nginx -t
 success "Nginx configuration is valid."
 
-# --- 6. Firewall Setup ---
+# --- 7. Firewall Setup ---
 info "Configuring firewall to allow Nginx traffic..."
 sudo ufw allow 'Nginx Full'
 # You can check the status with 'sudo ufw status'
 success "Firewall configured to allow 'Nginx Full'."
 
-# --- 7. Start and Enable Services ---
+# --- 8. Start and Enable Services ---
 info "Starting and enabling Gunicorn and Nginx services..."
 sudo systemctl daemon-reload
 sudo systemctl start gunicorn_${PROJECT_NAME}.socket
