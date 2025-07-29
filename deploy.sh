@@ -1,198 +1,118 @@
 #!/bin/bash
 
-# ===================================================================================
-# Django 'd-day-suneung' Auto-Deployment Script for Ubuntu
-# ===================================================================================
-# This script automates the deployment of the suneung_dday Django project
-# using Gunicorn and Nginx. It should be run by a non-root user with sudo privileges.
-# Based on a more robust script from the zerocoke-portfolio project.
-# ===================================================================================
-
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
-# --- Helper functions for colored output ---
-info() { echo -e "\e[34m[INFO]\e[0m $1"; }
-success() { echo -e "\e[32m[SUCCESS]\e[0m $1"; }
-error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
+# --- Fun. Colors! ---
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# --- Configuration ---
-# The name of your Django project (the directory with wsgi.py).
-DJANGO_PROJECT_NAME="suneung_dday"
-# The name for services and configs, derived from the repository directory name.
-REPO_NAME=$(basename "$(pwd)")
-# The full path to your project directory.
-PROJECT_DIR=$(pwd)
-# The user that will run the Gunicorn process.
-CURRENT_USER=$(whoami)
-# Your server's domain or IP address. Use "_" to match any hostname.
-DOMAIN_OR_IP="csat.zerocoke.kr"
+echo -e "${GREEN}--- Django Production Deployment Script ---${NC}"
+echo -e "${YELLOW}This script will configure Nginx and Gunicorn for your Django project.${NC}"
+echo
 
-echo "==============================================="
-info "Starting Deployment for $REPO_NAME"
-echo "==============================================="
-info "Project Directory: $PROJECT_DIR"
-info "Running as User:   $CURRENT_USER"
-info "Target Domain/IP:  $DOMAIN_OR_IP"
-echo "-----------------------------------------------"
+# --- 1. User Input ---
+read -p "Enter the project name (e.g., suneung_dday): " PROJECT_NAME
+read -p "Enable Debug Mode in .env? (true/false): " DEBUG_MODE
+read -p "Enter Allowed Hosts for .env (comma-separated, e.g., localhost,127.0.0.1,yourdomain.com): " ALLOWED_HOSTS_INPUT
 
+if [[ -z "$PROJECT_NAME" || -z "$DEBUG_MODE" || -z "$ALLOWED_HOSTS_INPUT" ]]; then
+    echo -e "${YELLOW}Error: All inputs are required. Aborting.${NC}"
+    exit 1
+fi
 
-# --- 1. System Update and Package Installation ---
-info "Updating system packages and installing dependencies..."
+# --- 2. Create .env File ---
+echo -e "${GREEN}--- Generating new SECRET_KEY and creating .env file ---${NC}"
+# Install django just to generate a key, if not available system-wide
+if ! python3 -c "from django.core.management.utils import get_random_secret_key" &> /dev/null; then
+    sudo apt-get install -y python3-django-common
+fi
+SECRET_KEY=$(python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+
+cat > .env << EOF
+# Environment variables for Django project
+DEBUG=${DEBUG_MODE}
+SECRET_KEY='${SECRET_KEY}'
+ALLOWED_HOSTS=${ALLOWED_HOSTS_INPUT}
+EOF
+echo ".env file created successfully."
+
+# --- 3. System Update and Package Installation ---
+echo -e "${GREEN}--- Updating system and installing dependencies (python, nginx) ---${NC}"
 sudo apt-get update
 sudo apt-get install -y python3-pip python3-dev python3-venv nginx
-success "System packages are up to date."
 
-# --- 2. Project Setup ---
-info "Setting up Python virtual environment..."
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-    info "Virtual environment created."
-fi
-
-info "Activating virtual environment and installing requirements..."
+# --- 4. Project & Python Environment Setup ---
+echo -e "${GREEN}--- Setting up Python virtual environment and installing requirements ---${NC}"
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-success "Python environment is ready."
 
-# --- 3. Django Setup ---
-info "Applying database migrations and collecting static files..."
+# --- 5. Django Project Setup ---
+echo -e "${GREEN}--- Applying migrations and collecting static files ---${NC}"
 python manage.py migrate
 python manage.py collectstatic --noinput
-success "Django setup complete."
 
-# --- 4. File Permissions Setup ---
-info "Setting file permissions..."
-# Set group ownership to www-data so Nginx can access the files
-sudo chown -R $CURRENT_USER:www-data $PROJECT_DIR
-# Give read and execute permissions to the group
-sudo chmod -R 775 $PROJECT_DIR
-success "File permissions set correctly."
+# --- 6. Gunicorn Systemd Service ---
+echo -e "${GREEN}--- Configuring Gunicorn systemd service ---${NC}"
+PROJECT_DIR=$(pwd)
+USER=$(whoami)
 
-# --- 5. Gunicorn & Environment Setup ---
-if [ -f .env ]; then
-    info "Using existing .env file provided by the user."
-    info "Please ensure it contains SECRET_KEY, DEBUG=False, and ALLOWED_HOSTS."
-else
-    info "No .env file found. Creating a new one with production settings..."
-    SECRET_KEY_VALUE=$(python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
-    cat > .env <<EOF
-SECRET_KEY='$SECRET_KEY_VALUE'
-DEBUG=False
-ALLOWED_HOSTS=$DOMAIN_OR_IP
-EOF
-    success ".env file created. Using domain '$DOMAIN_OR_IP' for ALLOWED_HOSTS."
-fi
-
-# --- 6. Gunicorn Setup ---
-# Use a unique socket and service name to avoid conflicts.
-GUNICORN_SOCKET_FILE="/etc/systemd/system/gunicorn_${REPO_NAME}.socket"
-GUNICORN_SERVICE_FILE="/etc/systemd/system/gunicorn_${REPO_NAME}.service"
-
-info "Configuring Gunicorn systemd socket at $GUNICORN_SOCKET_FILE..."
-sudo bash -c "cat > $GUNICORN_SOCKET_FILE" <<EOF
+sudo tee /etc/systemd/system/${PROJECT_NAME}.service > /dev/null <<EOF
 [Unit]
-Description=gunicorn socket for $REPO_NAME
-
-[Socket]
-ListenStream=/run/gunicorn_${REPO_NAME}.sock
-
-[Install]
-WantedBy=sockets.target
-EOF
-
-info "Configuring Gunicorn systemd service at $GUNICORN_SERVICE_FILE..."
-sudo bash -c "cat > $GUNICORN_SERVICE_FILE" <<EOF
-[Unit]
-Description=gunicorn daemon for $REPO_NAME
-Requires=gunicorn_${REPO_NAME}.socket
+Description=gunicorn daemon for ${PROJECT_NAME}
 After=network.target
 
 [Service]
-User=$CURRENT_USER
+User=${USER}
 Group=www-data
-WorkingDirectory=$PROJECT_DIR
-EnvironmentFile=$PROJECT_DIR/.env
-ExecStart=$PROJECT_DIR/venv/bin/gunicorn \
-          --access-logfile - \
-          --workers 3 \
-          --bind unix:/run/gunicorn_${REPO_NAME}.sock \
-          $DJANGO_PROJECT_NAME.wsgi:application
+WorkingDirectory=${PROJECT_DIR}
+ExecStart=${PROJECT_DIR}/venv/bin/gunicorn --workers 3 --bind unix:${PROJECT_DIR}/${PROJECT_NAME}.sock ${PROJECT_NAME}.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
 EOF
-success "Gunicorn systemd files created."
 
-# --- 7. Nginx Setup ---
-NGINX_CONF_FILE="/etc/nginx/sites-available/$REPO_NAME"
-info "Creating Nginx server block at $NGINX_CONF_FILE..."
-sudo bash -c "cat > $NGINX_CONF_FILE" <<EOF
+# --- 7. Nginx Configuration ---
+echo -e "${GREEN}--- Configuring Nginx server block ---${NC}"
+SERVER_NAME=$(echo ${ALLOWED_HOSTS_INPUT} | sed 's/,/ /g')
+
+sudo tee /etc/nginx/sites-available/${PROJECT_NAME} > /dev/null <<EOF
 server {
     listen 80;
-    server_name $DOMAIN_OR_IP;
+    server_name ${SERVER_NAME};
 
-    location = /favicon.ico { 
-        access_log off; 
-        log_not_found off; 
-        alias $PROJECT_DIR/staticfiles/favicon.ico;
-    }
-
+    location = /favicon.ico { alias ${PROJECT_DIR}/staticfiles/favicon.ico; }
     location /static/ {
-        alias $PROJECT_DIR/staticfiles/;
+        alias ${PROJECT_DIR}/staticfiles/;
     }
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:/run/gunicorn_${REPO_NAME}.sock;
+        proxy_pass http://unix:${PROJECT_DIR}/${PROJECT_NAME}.sock;
     }
 }
 EOF
 
-info "Enabling the new Nginx configuration..."
-sudo ln -sf $NGINX_CONF_FILE /etc/nginx/sites-enabled/
-# Remove default Nginx config if it exists
+# Enable the new Nginx server block
 if [ -f /etc/nginx/sites-enabled/default ]; then
     sudo rm /etc/nginx/sites-enabled/default
-    info "Removed default Nginx site configuration."
 fi
+sudo ln -sf /etc/nginx/sites-available/${PROJECT_NAME} /etc/nginx/sites-enabled/
 
-info "Testing Nginx configuration..."
+# Test Nginx config
 sudo nginx -t
-success "Nginx configuration is valid."
 
-# --- 8. Firewall Setup ---
-info "Configuring firewall to allow Nginx traffic..."
-sudo ufw allow 'Nginx Full'
-# You can check the status with 'sudo ufw status'
-success "Firewall configured to allow 'Nginx Full'."
-
-# --- 9. Start and Enable Services ---
-info "Starting and enabling Gunicorn and Nginx services..."
+# --- 8. Start and Enable Services ---
+echo -e "${GREEN}--- Starting and enabling Gunicorn and Nginx services ---${NC}"
 sudo systemctl daemon-reload
-sudo systemctl start gunicorn_${REPO_NAME}.socket
-sudo systemctl enable gunicorn_${REPO_NAME}.socket
-sudo systemctl restart gunicorn_${REPO_NAME}.service
-# Check if gunicorn is active
-sudo systemctl status gunicorn_${REPO_NAME}.socket --no-pager
-sudo systemctl status gunicorn_${REPO_NAME}.service --no-pager
-
-info "Restarting Nginx..."
+sudo systemctl restart gunicorn
+sudo systemctl enable gunicorn
 sudo systemctl restart nginx
+sudo systemctl enable nginx
 
-# --- Final Success Message ---
 echo
-echo "==============================================="
-success "Deployment Finished Successfully!"
-echo "==============================================="
-echo
-info "Your Django project is now live."
-if [ "$DOMAIN_OR_IP" == "_" ]; then
-    info "Access it at your server's IP address."
-else
-    info "Access it at: http://$DOMAIN_OR_IP"
-fi
-echo
-info "To monitor Gunicorn logs, run: sudo journalctl -u gunicorn_${REPO_NAME}.service"
-info "To monitor Nginx logs, run: sudo journalctl -u nginx.service"
-echo 
+echo -e "${GREEN}--- Deployment Finished Successfully! ---${NC}"
+echo -e "Your Django application is now live. Access it via one of your allowed hosts:"
+echo -e "${YELLOW}${ALLOWED_HOSTS_INPUT}${NC}" 
